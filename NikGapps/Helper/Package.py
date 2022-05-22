@@ -27,25 +27,17 @@ class Package:
         self.predefined_file_list = []  # Stores list of predefined file list
         self.overlay_list = []  # Stores list of overlay apks
         self.framework_list = []  # Stores list of Framework files
-        self.primary_app_location = None  # This will help generating priv-app whitelist permissions
+        self.primary_app_location = None  # This will help generate priv-app whitelist permissions
         self.folder_dict = dict()  # Stores list of folders that needs 755 permissions
         self.file_dict = dict()  # Stores the file location on server as key and on device as value
         self.delete_files_list = []  # Stores the path of file to delete. Helpful for removing AOSP counterpart
-        self.delete_rom_files_list = []  # Helpful for removing files in Roms with gapps
         self.priv_app_permissions = []  # Stores the priv-app whitelist permissions for the package
         self.enabled = 1
         self.validated = True
         self.clean_flash_only = False
         self.additional_installer_script = ""
         self.failure_logs = ""
-
-    def delete_in_rom(self, data):
-        if not str(data).startswith("/"):
-            if data not in self.delete_rom_files_list:
-                self.delete_rom_files_list.append(data)
-        else:
-            if data not in self.delete_rom_files_list:
-                self.delete_rom_files_list.append(data)
+        self.pkg_size = 0
 
     def delete(self, data):
         if not str(data).startswith("/"):
@@ -74,7 +66,7 @@ class Package:
         str_data += "# Initialize the variables\n"
         str_data += "default_partition=\"" + self.partition + "\"\n"
         str_data += "clean_flash_only=\"" + str(self.clean_flash_only).lower() + "\"\n"
-        str_data += "find_Install_partition\n"
+        str_data += "product_prefix=$(find_product_prefix \"$install_partition\")\n"
         str_data += "title=\"" + self.title + "\"\n"
         str_data += "package_title=\"" + self.package_title + "\"\n"
         str_data += "pkg_size=\"" + pkg_size + "\"\n"
@@ -84,15 +76,10 @@ class Package:
             str_data += "package_name=\"\"" + "\n"
         str_data += "packagePath=install" + self.package_title + "Files\n"
         str_data += "deleteFilesPath=delete" + self.package_title + "Files\n"
-        str_data += "deleteFilesFromRomPath=delete" + self.package_title + "FromRomFiles\n"
+        str_data += "propFilePath=$(get_prop_file_path)\n"
         str_data += "\n"
         str_data += f"remove_aosp_apps_from_rom=\"\n"
         for delete_folder in self.delete_files_list:
-            str_data += f"{delete_folder}\n"
-        str_data += "\"\n"
-        str_data += "\n"
-        str_data += f"remove_gapps_from_rom=\"\n"
-        for delete_folder in self.delete_rom_files_list:
             str_data += f"{delete_folder}\n"
         str_data += "\"\n"
         str_data += "\n"
@@ -111,21 +98,13 @@ class Package:
         str_data += "remove_aosp_apps() {\n"
         str_data += "   # Delete the folders that we want to remove with installing " + self.package_title + "\n"
         str_data += "   for i in $remove_aosp_apps_from_rom; do\n"
-        str_data += "       RemoveAospAppsFromRom \"$i\"\n"
-        str_data += "   done\n"
-        str_data += "}\n"
-        str_data += "\n"
-        str_data += "remove_gapps_from_rom() {\n"
-        str_data += "   # Delete the folders that we want to remove with installing on Rom with Gapps\n"
-        str_data += "   for i in $remove_gapps_from_rom; do\n"
-        str_data += "       RemoveFromRomWithGapps \"$i\"\n"
+        str_data += "       RemoveAospAppsFromRom \"$i\" \"$propFilePath\"\n"
         str_data += "   done\n"
         str_data += "}\n"
         str_data += "\n"
         str_data += "install_package() {\n"
         str_data += "   remove_existing_package\n"
         str_data += "   remove_aosp_apps\n"
-        str_data += "   remove_gapps_from_rom\n"
         str_data += "   # Create folders and set the permissions\n"
         for folder in self.folder_dict:
             str_data += "   make_dir \"" + folder + "\"\n"
@@ -134,31 +113,51 @@ class Package:
         str_data += "   for i in $file_list; do\n"
         str_data += "       install_file \"$i\"\n"
         str_data += "   done\n"
-        str_data += "   install_file \"___etc___permissions/" + self.package_title + ".prop\"\n"
+        if self.clean_flash_only:
+            str_data += "   install_file \"___etc___permissions/" + self.package_title + ".prop\"\n"
         str_data += "\n"
         if not str(self.additional_installer_script).__eq__(""):
             str_data += self.additional_installer_script
             str_data += "\n"
         str_data += "   chmod 755 \"$COMMONDIR/addon\";\n"
+        str_data += "   if [ -f \"$propFilePath\" ]; then\n"
+        str_data += "       echo \"install=$(echo \"$propFilePath\" | sed \"s|^$system/||\")\" " \
+                    ">>\"$TMPDIR/addon/$packagePath\"\n"
+        str_data += "       addToLog \"- Adding $propFilePath to $TMPDIR/addon/$packagePath\"\n"
+        str_data += "   fi\n"
         str_data += "   . $COMMONDIR/addon \"$OFD\" \"" + self.package_title + "\" \"$TMPDIR/addon/$packagePath\"" \
-                    + " \"$TMPDIR/addon/$deleteFilesPath\"" + " \"\"" + " \"$TMPDIR/addon/$deleteFilesFromRomPath\"\n"
-        str_data += "   copy_file \"$NikGappsAddonDir/" + self.package_title + ".sh\" \"$logDir/addonscripts/" + self.package_title + ".sh\"\n"
+                    + " \"$propFilePath\"" + " \"\"\n"
         str_data += "   copy_file \"$TMPDIR/addon/$packagePath\" \"$logDir/addonfiles/" + "$packagePath" + ".addon\"\n"
         str_data += "   rm -rf \"$TMPDIR/addon/$packagePath\"\n"
-        str_data += "   copy_file \"$TMPDIR/addon/$deleteFilesPath\" \"$logDir/addonfiles/" + "$deleteFilesPath" + ".addon\"\n"
-        str_data += "   copy_file \"$TMPDIR/addon/$deleteFilesFromRomPath\" \"$logDir/addonfiles/" + "$deleteFilesFromRomPath" + ".addon\"\n"
-        str_data += "   rm -rf \"$TMPDIR/addon/$deleteFilesPath\"\n"
-        str_data += "   rm -rf \"$TMPDIR/addon/$deleteFilesFromRomPath\"\n"
-        str_data += "}\n"
-        str_data += "\n"
-        str_data += "uninstall_package() {\n"
-        str_data += "   # Remove the files when we're uninstalling NiKGapps\n"
-        str_data += "   for i in $file_list; do\n"
-        str_data += "       uninstall_file \"$i\"\n"
-        str_data += "   done\n"
+        str_data += "   copy_file \"$propFilePath\" \"$logDir/addonfiles/" + "$package_title.prop" + \
+                    "\"\n"
         str_data += "}\n"
         str_data += "\n"
         str_data += "find_install_mode\n"
+        str_data += "\n"
+        return str_data
+
+    def get_uninstaller_script(self):
+        lines = Assets.get_string_resource(Assets.uninstaller_path)
+        str_data = ""
+        for line in lines:
+            str_data += line
+        str_data += "\n\n"
+        str_data += "# Initialize the variables\n"
+        str_data += "clean_flash_only=\"" + str(self.clean_flash_only).lower() + "\"\n"
+        str_data += "title=\"" + self.title + "\"\n"
+        str_data += "package_title=\"" + self.package_title + "\"\n"
+        if self.package_name is not None:
+            str_data += "package_name=\"" + self.package_name + "\"\n"
+        else:
+            str_data += "package_name=\"\"" + "\n"
+        str_data += "\n"
+        str_data += f"file_list=\"\n"
+        for file in self.file_dict:
+            str_data += str(file)[str(file).find("___"):].replace("\\", "/") + "\n"
+        str_data += "\"\n"
+        str_data += "\n"
+        str_data += "uninstall_package"
         str_data += "\n"
         return str_data
 
@@ -167,6 +166,7 @@ class Package:
         cmd = Cmd()
         self.failure_logs = ""
         if self.install_list.__len__() > 0 or self.predefined_file_list.__len__() > 0:
+            print("File(s) to fetch: " + str(len(self.install_list)))
             for file in self.install_list:
                 # Fetch the folder where the app files are located
                 source_folder = str(Path(self.primary_app_location).parent).replace("\\", "/")
@@ -248,6 +248,10 @@ class Package:
                         break
                 if parent_folder is not None:  # Fetch the list of files to pull
                     self.install_list = cmd.get_package_files_recursively(parent_folder, self.install_list)
+            else:
+                self.failure_logs = "Seems as if " + self.package_title + " is not installed in device!"
+                print(self.failure_logs)
+                self.failure_logs += "\n"
         else:
             if self.title != "ExtraFiles" and self.title != "ExtraFilesGo":
                 self.validated = False

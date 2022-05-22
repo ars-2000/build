@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import sys
-from NikGapps.Helper import FileOp
+from NikGapps.Helper import FileOp, NikGappsConfig
 from Release import Release
 import Config
 from NikGapps.Helper.Constants import Constants
@@ -64,7 +64,7 @@ else:
             print("Last Source Commit: " + str(source_last_commit_datetime))
 
     for android_version in android_versions:
-        Config.TARGET_ANDROID_VERSION = int(android_version)
+        Config.TARGET_ANDROID_VERSION = android_version
         apk_source_datetime = None
         release_datetime = None
         new_release = False
@@ -79,7 +79,8 @@ else:
                 apk_source_repo = Git(Constants.apk_source_directly + str(Config.TARGET_ANDROID_VERSION))
                 if apk_source_repo is not None:
                     apk_source_datetime = apk_source_repo.get_latest_commit_date(repo=branch)
-                    # if last commit was before release date, the release was already made so we don't need a new release
+                    # if last commit was before release date,
+                    # the release was already made, so we don't need a new release
                     print("Last Apk Repo (" + str(Config.TARGET_ANDROID_VERSION) + ") Commit: " + str(
                         apk_source_datetime))
             else:
@@ -88,16 +89,19 @@ else:
                 new_release = True
             if new_release or apk_source_datetime > release_datetime or source_last_commit_datetime > release_datetime:
                 new_release = True
-            apk_source_datetime_ago = release_datetime - apk_source_datetime
-            if str(apk_source_datetime_ago).startswith("-"):
-                print("Last Release was " + str(apk_source_datetime_ago * -1) + " before apk update")
+            if release_datetime is not None:
+                apk_source_datetime_ago = release_datetime - apk_source_datetime
+                if str(apk_source_datetime_ago).startswith("-"):
+                    print("Last Release was " + str(apk_source_datetime_ago * -1) + " before apk update")
+                else:
+                    print("Last Apk update was " + str(apk_source_datetime_ago) + " before release")
+                source_last_commit_datetime_ago = release_datetime - source_last_commit_datetime
+                if str(source_last_commit_datetime_ago).startswith("-"):
+                    print("Last Release was " + str(source_last_commit_datetime_ago * -1) + " before source update")
+                else:
+                    print("Last source update was " + str(source_last_commit_datetime_ago) + " before release")
             else:
-                print("Last Apk update was " + str(apk_source_datetime_ago) + " before release")
-            source_last_commit_datetime_ago = release_datetime - source_last_commit_datetime
-            if str(source_last_commit_datetime_ago).startswith("-"):
-                print("Last Release was " + str(source_last_commit_datetime_ago * -1) + " before source update")
-            else:
-                print("Last source update was " + str(source_last_commit_datetime_ago) + " before release")
+                print(f"There never really was a release done for android {str(Config.TARGET_ANDROID_VERSION)}")
         else:
             new_release = True
         if Config.OVERRIDE_RELEASE or new_release:
@@ -126,6 +130,9 @@ else:
         if website_repo is not None:
             commit_datetime = website_repo.get_latest_commit_date()
             website_repo.update_changelog()
+
+config = NikGappsConfig()
+config.upload_nikgapps_config()
 
 Constants.end_of_function(start_time, "Total time taken by the program")
 print("End of the Program")

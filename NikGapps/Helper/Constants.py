@@ -32,6 +32,10 @@ class Constants:
         android_version_folder = "Q"
     elif str(Config.TARGET_ANDROID_VERSION).__eq__("11"):
         android_version_folder = "R"
+    elif str(Config.TARGET_ANDROID_VERSION).__eq__("12"):
+        android_version_folder = "S"
+    elif str(Config.TARGET_ANDROID_VERSION).__eq__("12.1"):
+        android_version_folder = "SL"
 
     if str(Config.ENVIRONMENT_TYPE).__eq__("production"):
         android_version_folder = str(Config.TARGET_ANDROID_VERSION)
@@ -57,6 +61,7 @@ class Constants:
     #     TARGET_ANDROID_VERSION) + os.path.sep + current_time + os.path.sep + "Packages"
     path = os.path
     nikgapps_config = "nikgapps.config"
+    temp_nikgapps_config_location = temp_packages_directory + os.path.sep + nikgapps_config
     DELETE_FILES_NAME = "DeleteFilesData"
 
     if Config.TARGET_ANDROID_VERSION >= 10:
@@ -112,6 +117,10 @@ class Constants:
             Constants.android_version_folder = "Q"
         elif str(Config.TARGET_ANDROID_VERSION).__eq__("11"):
             Constants.android_version_folder = "R"
+        elif str(Config.TARGET_ANDROID_VERSION).__eq__("12"):
+            Constants.android_version_folder = "S"
+        elif str(Config.TARGET_ANDROID_VERSION).__eq__("12.1"):
+            Constants.android_version_folder = "SL"
         if str(Config.ENVIRONMENT_TYPE.lower()) == "production":
             Constants.android_version_folder = str(Config.TARGET_ANDROID_VERSION)
         Constants.export_directory = str(Path(Constants.cwd).parent) + os.path.sep + "Export" + os.path.sep + str(
@@ -159,8 +168,9 @@ class Constants:
     def get_import_path(app_set, pkg, install_path, export_directory=None):
         base_name = Constants.get_base_name(install_path)
         dir_name = Constants.get_parent_path(install_path)
-        dir_name = str(dir_name).replace("\\system", "").replace("/system", "").replace(
-            "/product", "").replace("\\product", "")
+        dir_name = str(dir_name).replace("\\system_ext", "").replace("/system_ext", "") \
+            .replace("\\system", "").replace("/system", "") \
+            .replace("\\product", "").replace("/product", "")
         if export_directory is not None:
             output = export_directory + Constants.dir_sep
         else:

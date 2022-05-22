@@ -5,7 +5,7 @@ from Config import SEND_ZIP_DEVICE
 from Config import SIGN_PACKAGE
 import Config
 from Config import UPLOAD_FILES
-from .AddonSet import AddonSet
+from . import NikGappsConfig
 from .ZipOp import ZipOp
 from .FileOp import FileOp
 from .Constants import Constants
@@ -23,12 +23,13 @@ class Export:
         self.file_name = file_name
         self.z = ZipOp(file_name)
 
-    def zip(self, app_set_list, sent_message=None):
+    def zip(self, config_obj: NikGappsConfig, sent_message=None):
         total_packages = 0
         print_progress = ""
         start_time = Constants.start_of_function()
         file_sizes = ""
         zip_execution_status = False
+        app_set_list = config_obj.config_package_list
         try:
             app_set_count = len(app_set_list)
             app_set_index = 1
@@ -44,15 +45,18 @@ class Export:
                     package_progress = round(float(100 * package_index / package_count))
                     pkg_zip_path = Constants.temp_packages_directory + Constants.dir_sep + "Packages" + Constants.dir_sep + str(
                         pkg.package_title) + ".zip"
+                    pkg_txt_path = Constants.temp_packages_directory + Constants.dir_sep + "Packages" + Constants.dir_sep + str(
+                        pkg.package_title) + ".txt"
                     print_value = "AppSet (" + str(
                         app_set_progress) + "%): " + app_set.title + " Zipping (" + str(
                         package_progress) + "%): " + pkg.package_title
                     print(print_value)
                     print_progress = print_progress + "\n" + print_value
                     file_exists = FileOp.file_exists(pkg_zip_path)
+                    txt_file_exists = FileOp.file_exists(pkg_txt_path)
                     old_file = True if (
                             file_exists and Constants.get_mtime(pkg_zip_path) < Constants.local_datetime) else False
-                    if (FRESH_BUILD and old_file) or (not file_exists):
+                    if (FRESH_BUILD and old_file) or (not file_exists) or (not txt_file_exists):
                         zpkg = ZipOp(pkg_zip_path)
                         file_index = 1
                         if sent_message is not None:
@@ -64,9 +68,13 @@ class Export:
                             file_index = file_index + 1
                             pkg_size = pkg_size + Constants.get_file_bytes(x)
                             zpkg.writefiletozip(x, str(x)[str(x).find("___"):].replace("\\", "/"))
-                        zpkg.writestringtozip("", "___etc___permissions/" + pkg.package_title + ".prop")
+                        if pkg.clean_flash_only:
+                            zpkg.writestringtozip("", "___etc___permissions/" + pkg.package_title + ".prop")
+                        pkg.pkg_size = pkg_size
                         zpkg.writestringtozip(pkg.get_installer_script(str(pkg_size)), "installer.sh")
+                        zpkg.writestringtozip(pkg.get_uninstaller_script(), "uninstaller.sh")
                         zpkg.close()
+                        FileOp.write_string_file(str(pkg_size), pkg_txt_path)
                         if SIGN_PACKAGE:
                             cmd = Cmd()
                             output_list = cmd.sign_zip_file(pkg_zip_path)
@@ -79,6 +87,11 @@ class Export:
                                     if sent_message is not None:
                                         sent_message.edit_text(
                                             "The zip signed successfully: " + Constants.get_base_name(pkg_zip_path))
+                    else:
+                        print(f"Using cached package: {Constants.get_base_name(pkg_zip_path)}")
+                        for size_on_file in FileOp.read_string_file(pkg_txt_path):
+                            pkg_size = size_on_file
+                            pkg.pkg_size = pkg_size
                     self.z.writefiletozip(pkg_zip_path,
                                           "AppSet/" + str(app_set.title) + "/" + str(pkg.package_title) + ".zip")
                     package_index = package_index + 1
@@ -86,24 +99,22 @@ class Export:
                     file_sizes = file_sizes + str(pkg.package_title) + "=" + str(pkg_size) + "\n"
                 app_set_index = app_set_index + 1
             # Writing additional script files to the zip
-            self.z.writestringtozip(self.get_updater_script(total_packages, app_set_list), "common/install.sh")
+            self.z.writestringtozip(self.get_installer_script(total_packages, app_set_list), "common/install.sh")
             self.z.writestringtozip("#MAGISK", Constants.meta_inf_dir + "updater-script")
             self.z.writefiletozip(Assets.magisk_update_binary, Constants.meta_inf_dir + "update-binary")
-            self.z.writestringtozip(self.get_nikgapps_config(), "afzc/nikgapps.config")
+            self.z.writestringtozip(config_obj.get_nikgapps_config(), "afzc/nikgapps.config")
             debloater_config_lines = ""
             for line in Assets.get_string_resource(Assets.debloater_config):
                 debloater_config_lines += line
             self.z.writestringtozip(debloater_config_lines, "afzc/debloater.config")
             self.z.writefiletozip(Assets.changelog, "changelog.yaml")
             self.z.writefiletozip(Assets.addon_path, "common/addon")
-            self.z.writefiletozip(Assets.addon_sh_path, "common/nikgapps.sh")
             self.z.writefiletozip(Assets.header_path, "common/header")
             self.z.writefiletozip(Assets.functions_path, "common/functions")
             self.z.writestringtozip(file_sizes, "common/file_size")
             self.z.writefiletozip(Assets.nikgapps_functions, "common/nikgapps_functions.sh")
             self.z.writefiletozip(Assets.mount_path, "common/mount.sh")
             self.z.writefiletozip(Assets.unmount_path, "common/unmount.sh")
-            self.z.writefiletozip(Assets.device_path, "common/device.sh")
             self.z.writestringtozip(self.get_customize_sh(self.file_name), "customize.sh")
             self.z.writefiletozip(Assets.module_path, "module.prop")
             self.z.writefiletozip(Assets.busybox, "busybox")
@@ -197,79 +208,36 @@ class Export:
             return zip_execution_status
 
     @staticmethod
-    def get_nikgapps_config():
-        nikgapps_config_lines = "# NikGapps configuration file\n"
-        for line in Assets.get_string_resource(Assets.nikgapps_config):
-            nikgapps_config_lines += line
-        for app_set in NikGappsPackages.get_packages("full"):
-            if len(app_set.package_list) > 1:
-                nikgapps_config_lines += "\n# Set " + app_set.title + "=0 if you want to skip installing all " \
-                                                                      "packages belonging to " \
-                                                                      "" + app_set.title + " Package\n"
-                nikgapps_config_lines += app_set.title + "=" + str(1) + "\n"
-                if str(os.environ.get('pkg_type')).__eq__("config"):
-                    for pkg in app_set.package_list:
-                        nikgapps_config_lines += ">>" + pkg.package_title + "=" + str(1) + "\n"
-                else:
-                    for pkg in app_set.package_list:
-                        nikgapps_config_lines += ">>" + pkg.package_title + "=" + str(pkg.enabled) + "\n"
-                nikgapps_config_lines += "\n"
-            else:
-                if str(os.environ.get('pkg_type')).__eq__("config"):
-                    for pkg in app_set.package_list:
-                        nikgapps_config_lines += pkg.package_title + "=" + str(1) + "\n"
-                else:
-                    for pkg in app_set.package_list:
-                        nikgapps_config_lines += pkg.package_title + "=" + str(pkg.enabled) + "\n"
-        for app_set in NikGappsPackages.get_packages("go"):
-            if len(app_set.package_list) > 1:
-                nikgapps_config_lines += "# Set " + app_set.title + "=0 if you want to skip installing all " \
-                                                                    "packages belonging to " \
-                                                                    "" + app_set.title + " Package\n"
-            nikgapps_config_lines += app_set.title + "=" + str(1) + "\n"
-        nikgapps_config_lines += "\n"
-        nikgapps_config_lines += "# Following are the Addon packages NikGapps supports\n"
-        for app_set in AddonSet.get_addon_packages():
-            nikgapps_config_lines += app_set.title + "=" + str(1) + "\n"
-        return nikgapps_config_lines
-
-    @staticmethod
-    def get_updater_script(total_packages, app_set_list):
-        updater_script_path_string = "#!/sbin/sh\n"
-        updater_script_path_string += "# Shell Script EDIFY Replacement\n\n"
+    def get_installer_script(total_packages, app_set_list):
+        delem = ","
+        installer_script_path_string = "#!/sbin/sh\n"
+        installer_script_path_string += "# Shell Script EDIFY Replacement\n\n"
         progress_max = 0.9
         progress_per_package = 0
         if total_packages > 0:
             progress_per_package = round(progress_max / total_packages, 2)
         install_progress = 0
-        # Script to Install the ApPSets
+        installer_script_path_string += f"ProgressBarValues=\"\n"
         for app_set in app_set_list:
-            if len(app_set.package_list) > 1:
-                updater_script_path_string += "if [ $(initialize_app_set \"" + app_set.title + "\") = \"1\" ]; then\n"
-                # Script to Install the Packages
-                for pkg in app_set.package_list:
-                    install_progress += progress_per_package
-                    if install_progress > 1.0:
-                        install_progress = 1.0
-                    updater_script_path_string += "  install_the_package \"" + str(app_set.title) + "\" \"" + str(
-                        pkg.package_title) + "\"\n"
-                    updater_script_path_string += "  set_progress " + str(round(install_progress, 2)) + "\n"
-                updater_script_path_string += "else\n"
-                updater_script_path_string += "  ui_print \"x Skipping " + str(app_set.title) + "\"\n"
-                updater_script_path_string += "fi\n"
-            else:
-                # Script to Install the Packages
-                for pkg in app_set.package_list:
-                    install_progress += progress_per_package
-                    if install_progress > 1.0:
-                        install_progress = 1.0
-                    updater_script_path_string += "  install_the_package \"" + str(app_set.title) + "\" \"" + str(
-                        pkg.package_title) + "\"\n"
-                    updater_script_path_string += "  set_progress " + str(round(install_progress, 2)) + "\n"
+            for pkg in app_set.package_list:
+                install_progress += progress_per_package
+                if install_progress > 1.0:
+                    install_progress = 1.0
+                installer_script_path_string += f"{pkg.package_title}={str(round(install_progress, 2))}\n"
+        installer_script_path_string += "\"\n\n"
+        for app_set in app_set_list:
+            installer_script_path_string += f"{app_set.title}=\"\n"
+            for pkg in app_set.package_list:
+                installer_script_path_string += f"{pkg.package_title}{delem}{pkg.pkg_size}{delem}{pkg.partition}\n"
+            installer_script_path_string += "\"\n\n"
 
-        updater_script_path_string += "\nset_progress 1.00" + "\n\n"
-        updater_script_path_string += "exit_install" + "\n\n"
-        return updater_script_path_string
+        for app_set in app_set_list:
+            installer_script_path_string += "install_app_set \"" + app_set.title + "\" " \
+                                                                                   "\"$" + app_set.title + "\"\n"
+
+        installer_script_path_string += "\nset_progress 1.00" + "\n\n"
+        installer_script_path_string += "exit_install" + "\n\n"
+        return installer_script_path_string
 
     @staticmethod
     def get_customize_sh(file_name):

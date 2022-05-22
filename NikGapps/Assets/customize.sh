@@ -3,11 +3,14 @@ SKIPUNZIP=1
 
 # File Defaults
 ZIPDIR=$(dirname "$ZIPFILE")
-ZIPNAME="$(basename "$ZIPFILE")"
+ZIPNAME="$(basename "$ZIPFILE" ".zip")"
+ZIP_NAME_LOWER=$(echo $ZIPNAME | tr '[:upper:]' '[:lower:]')
 
 if $BOOTMODE; then
   COMMONDIR=$MODPATH/NikGappsScripts
-  mkdir -p "$COMMONDIR"
+#  mkdir -p "$COMMONDIR"
+  ui_print "- NikGapps cannot be flashed as a module! Flash it via recovery..."
+  exit 0
 fi
 
 # Prop file potential locations
@@ -26,22 +29,36 @@ dynamic_partitions="false"
 TMPDIR=/dev/tmp
 
 # Logs
-NikGappsAddonDir="/system/addon.d/nikgapps"
+NikGappsAddonDir="/system/addon.d"
 datetime=$(date +%Y_%m_%d_%H_%M_%S)
-nikGappsLogFile="NikGapps_logs_$datetime.tar.gz"
+start_time=$(date +%Y_%m_%d_%H_%M_%S)
+#nikGappsLogFile="NikGapps_logs_$datetime.tar.gz"
 nikGappsLogFile="Logs-"$actual_file_name.tar.gz
 recoveryLog=/tmp/recovery.log
 logDir="$TMPDIR/NikGapps/logs"
 addon_scripts_logDir="$logDir/addonscripts"
 nikGappsDir="/sdcard/NikGapps"
 nikGappsLog=$TMPDIR/NikGapps.log
+installation_size_log=$TMPDIR/installation_size.log
 busyboxLog=$TMPDIR/busybox.log
 addonDir="$TMPDIR/addon"
 sdcard="/sdcard"
-master_addon_file="50-nikgapps-addon.sh"
+master_addon_file="51-nikgapps-addon.sh"
 
 addToLog() {
   echo "$1" >>"$nikGappsLog"
+}
+
+addSizeToLog() {
+  printf "%18s | %18s | %30s | %9s | %9s | %9s | %7s\n" "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$installation_size_log"
+}
+
+initializeSizeLog(){
+  echo "-------------------------------------------------------------" >> "$installation_size_log"
+  echo "- File Name: $actual_file_name" >> "$installation_size_log"
+  echo "-------------------------------------------------------------" >> "$installation_size_log"
+  addSizeToLog "Partition" "InstallPartition" "Package" "Before" "After" "Estimated" "Spent"
+  echo "-------------------------------------------------------------" >> "$installation_size_log"
 }
 
 nikGappsLogo() {
@@ -134,17 +151,18 @@ unpack "common/nikgapps.sh" "$COMMONDIR/nikgapps.sh"
 
 # load all NikGapps functions
 . "$COMMONDIR/nikgapps_functions.sh"
-# find device details
-. "$COMMONDIR/device.sh"
 # unmount for a fresh install
 . "$COMMONDIR/unmount.sh"
 # mount all the partitions
 . "$COMMONDIR/mount.sh"
 
-[ -n "$actual_file_name" ] && ui_print "- File Name: $actual_file_name"
+[ -n "$actual_file_name" ] && ui_print "- File Name: $actual_file_name" && initializeSizeLog
 find_zip_type
+find_device_block
 begin_unmounting
 begin_mounting
+# find if the device has dedicated partition or it's symlinked
+find_partitions_type
 find_config
 find_log_directory
 # find device information
@@ -161,11 +179,14 @@ ls -alR /product >"$logDir/partitions/Product_Files_Before.txt"
 find_system_size
 # find the size required to install gapps
 find_gapps_size
-# run the debloater
-test "$zip_type" = "debloater" && debloat
 calculate_space "system" "product" "system_ext"
 ui_print " "
-test "$zip_type" = "debloater" && ui_print "--> Starting the debloat process"
+mode=$(ReadConfigValue "mode" "$nikgapps_config_file_name")
+[ -z "$mode" ] && mode="install"
+[ "$ZIP_NAME_LOWER" = "uninstall" ] && mode="uninstall_by_name"
+addToLog "- Install mode is $mode"
+# run the debloater
+debloat
 
 if [ "$zip_type" != "debloater" ]; then
   ui_print "--> Starting the install process"
